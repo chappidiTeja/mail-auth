@@ -6,7 +6,6 @@ const crypto = require("crypto");
 const cors = require("cors");
 const rateLimit = require("express-rate-limit");
 const { v4: uuidv4 } = require('uuid');
-const jwt = require('jsonwebtoken'); // Add this for JWT
 
 const OTPModel = require("./models/otpModel");
 
@@ -57,29 +56,6 @@ const checkEmailDomain = (req, res, next) => {
   }
 
   next();  
-};
-
-// Auth middleware to verify JWT
-const authenticateToken = (req, res, next) => {
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN format
-  
-  if (!token) return res.status(401).json({ message: "Authentication required" });
-
-  jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
-    if (err) return res.status(403).json({ message: "Invalid or expired token" });
-    req.user = user;
-    next();
-  });
-};
-
-// Generate JWT token
-const generateToken = (user) => {
-  return jwt.sign(
-    { uuid: user.uuid, email: user.email }, 
-    process.env.JWT_SECRET, 
-    { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
-  );
 };
 
 const transporter = nodemailer.createTransport({
@@ -168,7 +144,7 @@ const sendOTP = async (email, otp) => {
   await transporter.sendMail(mailOptions);  // Sends the email
 };
 
-// Login with email only (starts OTP process)
+
 app.post("/request-otp", checkEmailDomain, async (req, res) => {
   const { email } = req.body;
   const otp = generateOTP();
@@ -184,7 +160,7 @@ app.post("/request-otp", checkEmailDomain, async (req, res) => {
   res.json({ message: "OTP sent successfully" });
 });
 
-// Verify OTP and issue JWT if successful
+// API: Verify OTP
 app.post("/verify-otp", async (req, res) => {
   const { email, otp } = req.body;
   if (!email || !otp) return res.status(400).json({ message: "Email and OTP are required" });
@@ -201,10 +177,7 @@ app.post("/verify-otp", async (req, res) => {
   const existingUser = await User.findOne({ email });
   
   if (existingUser) {
-    // Generate JWT token for existing user
-    const token = generateToken(existingUser);
-    
-    // Return user data and token
+    // Return user data if they already exist
     return res.json({ 
       message: "OTP verified successfully",
       userExists: true,
@@ -214,8 +187,7 @@ app.post("/verify-otp", async (req, res) => {
         name: existingUser.name,
         ageRange: existingUser.ageRange,
         gender: existingUser.gender
-      },
-      token: token
+      }
     });
   }
 
@@ -236,7 +208,9 @@ app.post("/verify-otp", async (req, res) => {
   });
 });
 
-// User Signup (now issues JWT after signup)
+
+
+// API: User Signup
 app.post("/signup", async (req, res) => {
   const { email, name, ageRange, gender } = req.body;
   
@@ -248,9 +222,6 @@ app.post("/signup", async (req, res) => {
   // Check if user already exists
   const existingUser = await User.findOne({ email });
   if (existingUser) {
-    // Generate token for existing user
-    const token = generateToken(existingUser);
-    
     return res.json({ 
       message: "User already exists",
       userExists: true,
@@ -260,8 +231,7 @@ app.post("/signup", async (req, res) => {
         name: existingUser.name,
         ageRange: existingUser.ageRange,
         gender: existingUser.gender
-      },
-      token: token
+      }
     });
   }
 
@@ -287,8 +257,8 @@ app.post("/signup", async (req, res) => {
 
   await newUser.save();
   
-  // Generate token for new user
-  const token = generateToken(newUser);
+  // Delete verification record (optional, depending on if you want to keep track of it)
+  // await Verification.deleteOne({ email });
 
   res.status(201).json({ 
     message: "User created successfully",
@@ -299,35 +269,8 @@ app.post("/signup", async (req, res) => {
       name: newUser.name,
       ageRange: newUser.ageRange,
       gender: newUser.gender
-    },
-    token: token
-  });
-});
-
-// Verify token endpoint (to check if token is valid)
-app.get("/verify-token", authenticateToken, async (req, res) => {
-  // If middleware passes, token is valid
-  const user = await User.findOne({ uuid: req.user.uuid });
-  
-  if (!user) {
-    return res.status(404).json({ message: "User not found" });
-  }
-  
-  res.json({ 
-    message: "Token is valid",
-    user: {
-      uuid: user.uuid,
-      email: user.email,
-      name: user.name,
-      ageRange: user.ageRange,
-      gender: user.gender
     }
   });
-});
-
-// Example of a protected route
-app.get("/protected-route", authenticateToken, (req, res) => {
-  res.json({ message: "This is a protected route", user: req.user });
 });
 
 // Start Server
